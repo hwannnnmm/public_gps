@@ -52,7 +52,9 @@
     var markersGroup = L.layerGroup().addTo(map);
 
     const WIFI_API_KEY = '446351794773683539335156714f68';
-    const WIFI_BASE_URL = `http://openapi.seoul.go.kr:8088/${WIFI_API_KEY}/xml/TbPublicWifiInfo/`;
+    // CORS 우회 프록시를 사용하여 API 호출
+    const PROXY_URL = 'https://cors-anywhere.herokuapp.com/';
+    const WIFI_BASE_URL = `${PROXY_URL}http://openapi.seoul.go.kr:8088/${WIFI_API_KEY}/xml/TbPublicWifiInfo/`;
 
     var wifiIcon = L.icon({
         iconUrl: 'https://png.pngtree.com/png-vector/20220610/ourmid/pngtree-colorful-map-marker-icon-isolated-on-white-background-eps-10-png-image_4882258.png',
