@@ -1,2 +1,201 @@
 # public_gps
-<a href="https://example.com/따릉이%20미포함gps.html" target="_blank">서울 공공 와이파이 지도</a>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>서울 공공 와이파이 지도</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            padding: 20px;
+        }
+        .map-container {
+            width: 100%;
+            height: 500px;
+            margin-bottom: 20px;
+        }
+        .info {
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css">
+</head>
+<body>
+
+<div class="container">
+    <h1 class="text-center">서울 공공 와이파이 지도</h1>
+    <div class="info">
+        <p>사용자의 위치를 입력하거나 GPS를 사용하여 와이파이 정보를 확인하세요!</p>
+        <div class="form-group">
+            <label for="userAddress">주소 입력:</label>
+            <input type="text" id="userAddress" class="form-control" placeholder="도로명 주소를 입력하세요">
+            <button id="findLocation" class="btn btn-primary mt-2">위치 찾기</button>
+            <button id="useGPS" class="btn btn-success mt-2">현재 위치 사용</button>
+        </div>
+    </div>
+    <div id="map" class="map-container"></div>
+</div>
+
+<script>
+    var map = L.map('map').setView([37.5665, 126.9780], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    var userMarker;
+    var markersGroup = L.layerGroup().addTo(map);
+
+    const WIFI_API_KEY = '446351794773683539335156714f68';
+    const WIFI_BASE_URL = `http://openapi.seoul.go.kr:8088/${WIFI_API_KEY}/xml/TbPublicWifiInfo/`;
+
+    var wifiIcon = L.icon({
+        iconUrl: 'https://png.pngtree.com/png-vector/20220610/ourmid/pngtree-colorful-map-marker-icon-isolated-on-white-background-eps-10-png-image_4882258.png',
+        iconSize: [30, 30]
+    });
+
+    var userIcon = L.icon({
+        iconUrl: 'https://cdn.icon-icons.com/icons2/619/PNG/512/map-marker-1_icon-icons.com_56710.png',
+        iconSize: [35, 35]
+    });
+
+    function formatAddress(address) {
+        address = address.replace(/(길|로)(\d+)(?!\S)/g, '$1 $2');
+        address = address.replace(/(\d+)\s*([가-힣A-Za-z]+동|층|호)/g, '$1, $2');
+        return address.trim();
+    }
+
+    async function fetchAllWifiLocations() {
+        const locations = [];
+        const step = 1000;
+        let start = 1;
+        let end = step;
+
+        while (start <= 24052) {
+            const response = await fetch(`${WIFI_BASE_URL}${start}/${end}/`);
+            const xmlText = await response.text();
+            const rows = new DOMParser().parseFromString(xmlText, "application/xml").getElementsByTagName("row");
+
+            for (let i = 0; i < rows.length; i++) {
+                const lat = rows[i].getElementsByTagName("LAT")[0]?.textContent;
+                const lng = rows[i].getElementsByTagName("LNT")[0]?.textContent;
+                const district = rows[i].getElementsByTagName("X_SWIFI_WRDOFC")[0]?.textContent;
+                const address = rows[i].getElementsByTagName("X_SWIFI_ADRES1")[0]?.textContent;
+                const detail = rows[i].getElementsByTagName("X_SWIFI_ADRES2")[0]?.textContent || "상세 정보 없음";
+
+                if (lat && lng) locations.push({ 
+                    lat: parseFloat(lat), 
+                    lng: parseFloat(lng), 
+                    district, 
+                    address, 
+                    detail
+                });
+            }
+            start = end + 1;
+            end = start + step - 1;
+        }
+        return locations;
+    }
+
+    function getNearestLocations(userCoords, locations, maxDistance = Infinity) {
+        return locations.map(location => ({
+            ...location,
+            distance: Math.round(Math.sqrt(Math.pow(userCoords.lat - location.lat, 2) + Math.pow(userCoords.lng - location.lng, 2)) * 111 * 1000)
+        })).filter(location => location.distance <= maxDistance)
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 10);
+    }
+
+    function addMarkers(userCoords, locations, icon, type) {
+        locations.forEach(location => {
+            L.marker([location.lat, location.lng], { icon: icon })
+                .addTo(markersGroup)
+                .bindPopup(type === "와이파이"
+                    ? `<b>와이파이 위치:</b> ${location.address}<br><b>상세 주소:</b> ${location.detail}<br><b>거리:</b> ${location.distance} m`
+                    : `<b>따릉이 위치:</b> ${location.stationName}<br><b>사용 가능 자전거:</b> ${location.parkingBikeTotCnt || '정보 없음'} 개<br><b>거치대 수:</b> ${location.rackTotCnt} 개<br><b>거리:</b> ${location.distance} m`);
+        });
+    }
+
+    document.getElementById("findLocation").addEventListener("click", async () => {
+        let address = document.getElementById("userAddress").value;
+
+        if (address) {
+            address = formatAddress(address);
+            const userCoords = await geocodeAddress(address);
+            if (!userCoords) return alert("주소를 찾을 수 없습니다.");
+
+            markersGroup.clearLayers();
+
+            userMarker = L.marker([userCoords.lat, userCoords.lng], { icon: userIcon })
+                .addTo(markersGroup)
+                .bindPopup("<b>사용자 위치</b>").openPopup();
+
+            map.setView([userCoords.lat, userCoords.lng], 14);
+
+            const wifiData = await fetchAllWifiLocations();
+            const nearestWifi = getNearestLocations(userCoords, wifiData);
+            addMarkers(userCoords, nearestWifi, wifiIcon, "와이파이");
+        } else {
+            alert("주소를 입력하세요.");
+        }
+    });
+
+    document.getElementById("useGPS").addEventListener("click", async () => {
+        try {
+            const userCoords = await getUserLocation();
+
+            markersGroup.clearLayers();
+
+            userMarker = L.marker([userCoords.lat, userCoords.lng], { icon: userIcon })
+                .addTo(markersGroup)
+                .bindPopup("<b>사용자 위치</b>").openPopup();
+
+            map.setView([userCoords.lat, userCoords.lng], 14);
+
+            const wifiData = await fetchAllWifiLocations();
+            const nearestWifi = getNearestLocations(userCoords, wifiData);
+            addMarkers(userCoords, nearestWifi, wifiIcon, "와이파이");
+        } catch (error) {
+            console.error("GPS 사용 중 오류:", error);
+        }
+    });
+
+    async function geocodeAddress(address) {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+        const data = await response.json();
+        return data.length ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
+    }
+
+    function getUserLocation() {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                alert("GPS를 지원하지 않는 브라우저입니다.");
+                reject("Geolocation not supported");
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const coords = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                    };
+                    resolve(coords);
+                },
+                (error) => {
+                    alert("GPS 위치를 가져올 수 없습니다.");
+                    reject(error);
+                }
+            );
+        });
+    }
+</script>
+
+</body>
+</html>
